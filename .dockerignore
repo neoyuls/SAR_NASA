@@ -46,5 +46,6 @@ Thumbs.db
 tests/
 deploy/
 # Keep only the documentation consumed by the runtime.
+!docs/
 docs/*
 !docs/science-guide.md

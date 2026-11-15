@@ -18,6 +18,7 @@ data/raw
 data/staging
 pipeline
 tests
+!docs/
 docs/*
 !docs/science-guide.md
 *.h5
