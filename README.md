@@ -5,9 +5,14 @@
 NASA Space Apps Challenge 2026 — *Dancing with the SARs*.
 **Deliverable: a deployed web application**, not a report.
 
+## ▶ Live demo: <https://noteam.cloud.run>
+
+No install, no account, no NASA credentials. Open it in any browser; it boots on the committed
+artefacts.
+
 | | |
 |---|---|
-| Demo | *no public URL yet* — run it locally: `./scripts/python.sh -m streamlit run app.py`, then open <http://localhost:8501> (verified 2026-11-14: `/_stcore/health` → 200, root → 200, no credentials needed); deployment is the last open deliverable |
+| Demo | **Live: <https://noteam.cloud.run>** (verified 2026-11-15: `/_stcore/health` → 200, root → 200, four tabs and the `DEMONSTRATION DATA` banner render at 1440×900). Local fallback: `./scripts/python.sh -m streamlit run app.py`, then open <http://localhost:8501> |
 | Repository | `github.com/neoyuls/SAR_NASA` — the default branch **`main`** carries the artefacts, the pipeline, the tests and **contract v1.1** (62 acquisition dates per case). `yuls` is the older contract-1.0 line (12 dates); `main` already contains it, so nothing is waiting on it |
 | Video | script ready in [`docs/video-script.md`](docs/video-script.md); recording pending |
 | Team | **yuls** SAR science, GIS, product · **pozo** geospatial backend, deployment · **fradiaz** frontend, interaction |
@@ -22,11 +27,13 @@ NASA Space Apps Challenge 2026 — *Dancing with the SARs*.
 > `./scripts/check_phase_a.sh` → PASS, `./scripts/preflight.sh` → `VERDICT: READY` (7/7 gates),
 > and a fresh clone of the default branch, `main`, runs the full suite green.
 >
-> **What does not exist yet:** any run on a real granule, and any deployed URL. The image build and
-> the first CI run are committed but unverified here, because this machine has no `docker` binary.
-> **Every displacement value in `data/processed/` is synthetic** — `product: "mock"`, and every
-> artefact says so in its own `provenance` and `limitations`. The context geometry is **not**
-> synthetic: it is derived from an OpenStreetMap extract and offered under the ODbL 1.0 (§17).
+> **What does not exist yet:** any run on a real granule. The public demo
+> <https://noteam.cloud.run> is up: Cloud Run builds the root `Dockerfile`, validates the contract
+> and the artefacts during the image build, and serves the same committed mock set with no
+> credentials. **Every displacement value in `data/processed/` is synthetic** — `product: "mock"`,
+> and every artefact says so in its own `provenance` and `limitations`. The context geometry is
+> **not** synthetic: it is derived from an OpenStreetMap extract and offered under the ODbL 1.0
+> (§17).
 >
 > **Language.** This README is the entry point (English). The operative role/workflow document
 > [`flujo_trabajo_y_responsabilidades.md`](flujo_trabajo_y_responsabilidades.md) is in Spanish and
@@ -683,6 +690,9 @@ Use `git status` and `git diff` to inspect — they cannot lose work.
 - [x] **AOI refresh committed** — `config/aoi/*.geojson` plus the artefacts regenerated from them; a
       fresh clone resolves the current rings, and `tests/test_aoi_geometry.py` holds the single-ring rule
 - [x] The app boots on the committed mock alone (`/_stcore/health` → 200, `/` → 200, no credentials)
+- [x] **Public demo up** at <https://noteam.cloud.run> (Cloud Run, root `Dockerfile`); rendered in a
+      headless browser on 2026-11-15: four tabs, the `DEMONSTRATION DATA` banner, no horizontal
+      overflow at 1440×900
 - [ ] CI is committed (`.github/workflows/ci.yml` runs the contract self-check, the artefact gate and
       the suite); no red/green CI run has been observed from this machine
 - [x] `config/study_cases.yaml` with the primary case and the AOI polygon
@@ -698,10 +708,11 @@ Use `git status` and `git diff` to inspect — they cannot lose work.
   metrics computed once, server-side; CI reproduces artefacts from a clean checkout.
 - **Rol 2:** the four views that exist are reachable — map, series and KPIs, hazard and
   infrastructure, provenance and limits (`tests/test_ui_smoke.py` pins exactly four tabs); a fifth is
-  **not implemented**; **the app starts with no NASA credentials**; the URL round-trips the eight
-  filter and selection keys but not the active tab or the expander state; every rendered number
-  carries a unit; the `H3 cell` selectbox gives a keyboard path to the map's numbers; `?compact=1`
-  collapses the filter panel on a phone.
+  **not implemented**; **the app starts with no NASA credentials**; the URL round-trips case,
+  filters, tab, ramp and the selected cell (`case`, `land`, `risk`, `coh`, `extrude`, `theme`,
+  `scale`, `cell`, `tab`, `ramp`) but not the open/closed state of the expanders; every rendered
+  number carries a unit; the `H3 cell` selectbox gives a keyboard path to the map's numbers;
+  `?compact=1` collapses the filter panel on a phone.
 - **Everyone:** `main` runnable, PR reviewed, `./scripts/python.sh -m pytest tests -q` green.
 
 ---
