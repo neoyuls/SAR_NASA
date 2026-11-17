@@ -1,9 +1,9 @@
 # Science guide — SAR to publishable displacement
 
-This is the detailed scientific companion to [`CONTEXT.md`](../CONTEXT.md). It explains the physical
+This is the detailed scientific companion to the project README. It explains the physical
 measurement, the time-series and identifiability gates, and the H3 spatial model. Acquisition and
-processing mechanics live in [`pipeline-internals.md`](pipeline-internals.md); field definitions are
-normative in [`data-contract-v1.md`](data-contract-v1.md) and `src/domain/contracts.py`.
+processing mechanics live in `pipeline/`; field definitions are normative in
+`src/domain/contracts.py`.
 
 > **Evidence boundary.** Every committed artefact under `data/processed/` is synthetic
 > (`product: "mock"`). The real-processing path has been exercised on synthetic HDF5 fixtures, not a
@@ -38,7 +38,7 @@ published detection limit, no per-city auto-stretch.*
 
 ## 2. SAR and InSAR from first principles
 
-*Read this section only if you will touch a number's arithmetic. Artefact consumers can start at [the data contract](data-contract-v1.md):
+*Read this section only if you will touch a number's arithmetic. Artefact consumers can start at the data contract:
 nothing here is needed to render anything.*
 
 Six conventions hold everywhere in this repo, and most confusion in InSAR comes from one of them
@@ -151,7 +151,7 @@ value when the metadata is missing. At θ = 39°:
 | 1 radian of phase | 18.97 mm | **24.41 mm** |
 | one fringe (2π) | 119.2 mm | **153.4 mm** |
 
-Reproduce it exactly (this is the command quoted in `pipeline/README.md` §6):
+Reproduce it exactly (this is the command the pipeline documents):
 
 ```bash
 ./scripts/python.sh -c "import math; from pipeline.science import transforms as V; \
@@ -244,7 +244,7 @@ to recover a continuous field, and it is where real InSAR fails:
 | orbit error | long-wavelength ramp | needs baseline/ramp correction (designed, not implemented) |
 | DEM error | phase proportional to baseline | designed, not implemented |
 
-NISAR GUNW (geocoded unwrapped interferogram, [§1.2 of the pipeline internals](pipeline-internals.md#12-reader-ownership-and-fallbacks)) ships `connectedComponents` (uint32) so
+NISAR GUNW (geocoded unwrapped interferogram, §1.2 of the pipeline internals) ships `connectedComponents` (uint32) so
 disconnected islands are *visible* rather than silently offset; the reader requires and summarises the
 labels (`nisar_gunw.summary()["connected_components"]`), but no filter consumes them yet. README §13
 lists the remaining error sources; their expected ordering is scene- and stack-dependent, so the
@@ -382,7 +382,7 @@ from a **cycle** without lying about either — and to know when the data cannot
 
 Each granule `(t_i, t_{i+1})` gives a *difference*. A series is formed by chaining differences to a
 reference epoch, so the first date is exactly 0 mm (the cells these trajectories belong to are
-defined in §4; their published fields in [the data contract](data-contract-v1.md)):
+defined in §4; their published fields in the data contract):
 
 ```
 d(t_k) = Σ_{i<k} d_LOS(t_i → t_{i+1})        d(t_1) = 0
@@ -410,7 +410,7 @@ honestly be both.
 
 **Pair count is not epoch count.** A connected chain of `k` pairs yields `k + 1` epochs.
 The availability preview and the contiguous download run are different selections; their rules live
-in `pipeline/ingest/README.md`. The processor requires a connected network and at least
+in `pipeline/ingest/02_search_download.py`. The processor requires a connected network and at least
 `MIN_FIT_POINTS = 4` epochs, regardless of how the chain was selected.
 
 ### 3.2 The time-series model, and why harmonics are *centred*
@@ -439,7 +439,7 @@ Design matrix for `K = 1`, `T = 1 yr`:
   is that recovered number, not a copy of a config entry, is what makes `velocity_mm_yr` a fit.
 - `A_seasonal = hypot(A₁, B₁)` is the recoverable/elastic amplitude — computed, and **gated** (§3.3).
 - The annual harmonic sits *inside* the basis, so a 12-day-sampled subsiding city cannot label its
-  seasonal swing as a trend. That collinearity is the entire point of step P6 ([the pipeline stages](pipeline-internals.md#2-actual-processing-order)) — the
+  seasonal swing as a trend. That collinearity is the entire point of step P6 (the pipeline stages) — the
   harmonic-versus-trend separation.
 
 **Why "recovers to floating-point precision" is not contradicted by "ill-conditioned" below.** Same
@@ -512,7 +512,7 @@ endpoint completes barely a third of a period, so its cosine has not come back u
 ```
 
 Numbers from the fix, measured on that 132-day window (precise digits: decision D-02;
-`docs/handoff-mock.md` §1 rounds them to "2–8×" and never states the cell count): before centring,
+the mock hand-off note rounds them to "2–8×" and never states the cell count): before centring,
 `delta_change/T` overstated the trend by **2.1–7.9×** and disagreed in *sign* on up to **601 cells**
 — the map rose where the slider fell.
 These were measured on 2026-11-14 against the pre-fix code and no committed test reproduces them
@@ -538,7 +538,7 @@ series = velocity[:, None] * t_years[None, :] + seasonal[None, :]
 
 > **2026-11-15 — the demo window is two years, not 132 days, and the gates now pass.** The
 > short-window failure this section is built around is still the reason contract 1.1's seasonal fields
-> are a *fit result* rather than typed constants (O-05 in [the decisions](decisions.md)): on the
+> are a *fit result* rather than typed constants (O-05 in the decisions): on the
 > 2-year window `annual_coverage` (2.004) and the design condition (4.12) both clear their gates with
 > margin, so `seasonal_amp_mm`, `ratio_R` and `regime` are published. The 0.36 yr figures below are the
 > historical 132-day measurement, kept because they are what the gates are calibrated against; each is
@@ -634,9 +634,9 @@ hypothetical.
 
 *`R` and `regime` are computed by `classify_regime` and, since contract v1.1, **published**: `ratio_R`
 and `regime` are required grid columns, and `median_ratio_R` / `dominant_regime` are required stats
-(see `GRID_FIELDS`, [the data contract](data-contract-v1.md)). Under v1.0 they were computed and
+(see `GRID_FIELDS`, the data contract). Under v1.0 they were computed and
 dropped, because the 132-day window could not measure the denominator (§3.3). The app still *bands*
-`risk_level`, and the colour itself is `velocity_mm_yr` ([the mock handoff](handoff-mock.md)).*
+`risk_level`, and the colour itself is `velocity_mm_yr` (the mock handoff).*
 
 ```
 R = |ṫ| / A_seasonal
@@ -672,7 +672,7 @@ karst is elastic. Under v1.0 `R` was **not published**: `transforms.classify_reg
 denominator was not measurable. That was a property of the window, not of the quantity: on the 2-year
 window `seasonal_amp_mm` is identifiable (§3.3), so v1.1 transports the ratio as `ratio_R` and the
 label as `regime`. What the app *bands* is still `risk_level` (the colour itself is
-`velocity_mm_yr`, [the mock handoff](handoff-mock.md)), and a band is a frozen velocity threshold, not a regime.
+`velocity_mm_yr`, the mock handoff), and a band is a frozen velocity threshold, not a regime.
 
 **What the split means physically.** Subsidence in these cities is **interbed compaction**: pumping
 lowers the hydraulic head in a confined aquifer, the fine-grained beds inside it drain slowly, and

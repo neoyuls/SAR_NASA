@@ -587,6 +587,8 @@ def test_fringe_fractions_use_the_vertical_denominator() -> None:
 
 
 def test_coverage_denominators_are_never_conflated() -> None:
+    if not all((ROOT / path).is_file() for path in DOCUMENTS):
+        pytest.skip("the documents that state coverage percentages are internal, not shipped")
     report: list[str] = []
     coverage_claims = 0
 
@@ -644,6 +646,8 @@ def test_coverage_denominators_are_never_conflated() -> None:
 
 
 def test_contract_fingerprint_matches_the_contracts_module() -> None:
+    if not all((ROOT / path).is_file() for path in DOCUMENTS):
+        pytest.skip("the documents that quote the full fingerprint are internal, not shipped")
     fingerprint = C.contract_fingerprint()
     assert (
         fingerprint == "ed92be802ff8846fe369058d9a80c9545c2a694a17896de6a5f1844146e302ae"

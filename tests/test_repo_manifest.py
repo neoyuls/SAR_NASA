@@ -24,9 +24,8 @@ CRITICAL = (
     "scripts/check_phase_a.sh",
     "scripts/preflight.sh",
     "scripts/python.sh",
-    # the frozen contract, in both halves
+    # the frozen contract: the code is the source of truth and ships on its own
     "src/domain/contracts.py",
-    "docs/data-contract-v1.md",
     # the case definition of record and the dependency list a fresh clone needs
     "config/study_cases.yaml",
     # the AOIs the pipeline actually resolves. A clone without these silently falls back to the
@@ -41,17 +40,9 @@ CRITICAL = (
     # attribution block is the only place the data licences (NASA/ASF, ESA Copernicus, OSM) are
     # stated, so losing this file silently un-licences the whole submission.
     "LICENSE",
-    # the concise technical navigator linked from README; losing it re-orphans the focused guides
-    "CONTEXT.md",
     # the artefact gate and the mock generator: without these there are no artefacts
     "pipeline/validate_artifacts.py",
     "pipeline/generate_mock.py",
-    # documents the team is told to read
-    "docs/data-source-decision.md",
-    "docs/nisar-gunw-layout.md",
-    "docs/handoff-mock.md",
-    "docs/first-granule-runbook.md",
-    "docs/demo-fallback.md",
     # the guards themselves: losing one removes a check without failing anything else, which is
     # exactly how the 2026-11-14 reset stayed quiet until a documentation test asked for a file.
     "tests/test_docs_links.py",
@@ -72,9 +63,6 @@ CRITICAL = (
     "tests/test_contracts.py",
     "tests/test_validate_artifacts.py",
     "tests/test_fingerprint_consistency.py",
-    # the two long-form documents a reader is pointed at
-    "CONTEXT.md",
-    "docs/decisions.md",
 )
 
 #: Scripts a caller executes directly; losing the executable bit breaks the documented command.

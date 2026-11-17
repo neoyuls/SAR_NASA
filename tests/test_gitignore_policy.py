@@ -80,8 +80,6 @@ TRACKABLE = (
     # `!.streamlit/config.toml` in .gitignore exist for.
     ".streamlit/config.toml",
     "LICENSE",
-    "CONTEXT.md",
-    "docs/decisions.md",
     "config/aoi/mexico-city.geojson",
     "data/processed/mexico-city/nisar_grid.parquet",
 )

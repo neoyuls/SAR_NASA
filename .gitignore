@@ -39,6 +39,19 @@ docs/opencode_pack/
 **/skills/
 **/*PROMPT*.md
 **/*prompt*.md
+
+# ---------------------------------------------------------------- internal docs stay local
+# The submitted repository ships only the reader-facing entry point (README.md), the runtime science
+# guide (docs/science-guide.md, read by `load_documented_limits` for Tab 4) and the pitch figures.
+# Design decisions, runbooks, hand-offs, verification logs and work requests stay in each
+# contributor's checkout: they explain how the project was built, not what it does.
+CONTEXT.md
+flujo_trabajo_y_responsabilidades.md
+deploy/README.md
+pipeline/README.md
+pipeline/ingest/README.md
+docs/*.md
+!docs/science-guide.md
 __pycache__/
 *.py[cod]
 *$py.class

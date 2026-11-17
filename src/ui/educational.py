@@ -271,7 +271,8 @@ def render_physics_tab(loaders: Any, meta: dict[str, Any] | None) -> None:
         with st.expander("How this measurement works (SAR physics)", expanded=False):
             st.markdown(
                 '<p class="kpi-note"><strong>SAR physics and regime classification</strong> · from '
-                "docs/science-guide.md §1, README.md and docs/data-contract-v1.md §7.5.</p>",
+                "docs/science-guide.md §1, README.md and the frozen contract in "
+                "src/domain/contracts.py.</p>",
                 unsafe_allow_html=True,
             )
             if science_summary:

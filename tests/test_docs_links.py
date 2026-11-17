@@ -540,6 +540,11 @@ def test_relative_links_resolve(doc: Path) -> None:
     """Relative links resolve against the linking file's directory; local anchors exist."""
     if not doc.exists():
         pytest.skip(f"{_rel(doc)} is not present; no links to check")
+    if _tracked_paths() is not None and _index_text(_rel(doc)) is None:
+        pytest.skip(
+            f"{_rel(doc)} is a local note, not part of the repository: a clone never reads it, so "
+            "its links are not a shipped instruction"
+        )
     problems = check_links(doc)
     assert not problems, (
         f"{len(problems)} broken relative link(s) in {_rel(doc)} "
@@ -553,6 +558,11 @@ def test_backticked_repo_paths_exist(doc: Path) -> None:
     """Every backticked repository path exists, unless an allowlist above says why it cannot."""
     if not doc.exists():
         pytest.skip(f"{_rel(doc)} is not present; no paths to check")
+    if _tracked_paths() is not None and _index_text(_rel(doc)) is None:
+        pytest.skip(
+            f"{_rel(doc)} is a local note, not part of the repository: a clone never reads it, so "
+            "its citations are not a shipped instruction"
+        )
     checked = [ref for ref in iter_backticked_paths(doc) if ref.skip_reason is None]
     problems = check_backticked_paths(doc)
     assert not problems, (

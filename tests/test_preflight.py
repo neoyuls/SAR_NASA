@@ -340,8 +340,9 @@ def test_clone_gate_fails_on_a_committed_doc_that_breaks_the_guards(tmp_path: Pa
     """The blind spot: HEAD can carry a doc whose printed command no longer works.
 
     A temp copy of the working tree gets one deliberately broken documented command (an unknown
-    flag on the dry-run line), is committed, and the real gate_clone() runs against that clone.
-    The gate must report FAIL and name the doc and line, not merely the artefact fingerprint.
+    flag on the artefact-gate line), is committed, and the real gate_clone() runs against that
+    clone. The gate must report FAIL and name the doc and line, not merely the artefact
+    fingerprint.
     """
     tmp_root = tmp_path / "tmp"
     tmp_root.mkdir()
@@ -349,8 +350,8 @@ def test_clone_gate_fails_on_a_committed_doc_that_breaks_the_guards(tmp_path: Pa
 
     readme = repo / "README.md"
     original = readme.read_text(encoding="utf-8")
-    witness = "--max-gb 6 --dry-run"
-    assert original.count(witness) >= 1, "the dry-run line moved; update this fixture"
+    witness = "pipeline/validate_artifacts.py --processed data/processed"
+    assert original.count(witness) >= 1, "the artefact-gate line moved; update this fixture"
     readme.write_text(
         original.replace(witness, f"{witness} --definitely-not-a-real-flag", 1),
         encoding="utf-8",
