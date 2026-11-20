@@ -104,18 +104,27 @@ regeneration, demo numbers) and ends in a single `VERDICT: READY` or `VERDICT: N
 Four tabs, one per question a reader actually asks:
 
 1. **Map** — the H3 grid coloured by velocity (or the accessible blue–neutral–orange ramp), the
-   filter strip, the shared-scale toggle, and a reading panel with the series and the KPIs for the
-   filtered subset.
-2. **Series and KPIs** — the whole 62-date series, its fitted trend and annual harmonic, and the
-   KPIs that describe the grid behind it.
+   filter strip, a segmented **Scale** control (per case or shared across cases), and a reading panel
+   with the selected cell's series. The inspector places that cell against the view's p05 / median /
+   p95 velocity; the risk band is labelled as derived from |velocity|, not a measurement. Observed
+   coherence bounds and the published floor are shown separately. With 3D extrusion on, column
+   height is labelled as presentation only — cell values and units are unchanged.
+2. **Series and KPIs** — the whole 62-date series, its fitted trend and annual harmonic, the KPIs
+   that describe the grid behind it (all computed in `src.domain`), and a compact velocity strip
+   showing p05 — median — p95 plus the selected cell. An undefined seasonal ratio reads
+   "not fitted"; no number is invented for it.
 3. **Hazard and infrastructure** — the OpenStreetMap context layer, cross-referenced to the nearest
-   filtered cell. A proximity cross-reference, never a hazard claim.
+   filtered cell. A proximity cross-reference, never a hazard claim. Delivered nearest-cell distances
+   are reported as descriptive minimum / median / maximum in metres; neither the artefact nor the
+   contract declares a near/far threshold, so distances are not classified.
 4. **Provenance and limits** — sensor, product, units, dates, the provenance record, the documented
    limitations and the raw `meta.json` fields.
 
 The UI state is mirrored in the URL (`case`, `land`, `risk`, `coh`, `extrude`, `theme`, `scale`,
 `cell`, `tab`, `ramp`), so a copied URL restores the cockpit; `?compact=1` collapses the filter strip
-on a phone. Dark and light themes follow the system preference.
+on a phone. Dark and light themes follow the system preference. On small screens the header telemetry
+collapses into a compact chip with expandable details, and the Streamlit toolbar is minimal so the
+cockpit's own header remains the only chrome.
 
 ---
 

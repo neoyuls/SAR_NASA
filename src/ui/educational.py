@@ -100,6 +100,8 @@ def _case_block(
     case_roles: Mapping[str, Any] | None = None,
     median: Any = None,
     median_unit: Any = None,
+    *,
+    show_limits: bool = True,
 ) -> None:
     stats = meta.get("stats") if isinstance(meta.get("stats"), Mapping) else {}
     cards: list[tuple[str, Any, str | None]] = []
@@ -124,7 +126,6 @@ def _case_block(
         if isinstance(series, dict) and "enabled" in series:
             cards.append(("per_cell_series.enabled", series.get("enabled"), None))
     # The DEMONSTRATION DATA banner is the single mock notice; no prose repetition.
-    case_note = "Values come from the delivered artefact."
     case_id = str(meta.get("case_id") or "")
     role_info = (case_roles or {}).get(case_id) if isinstance(case_roles, Mapping) else None
     role_lines = ""
@@ -144,7 +145,6 @@ def _case_block(
     st.markdown(
         '<div class="cockpit-card">'
         '<p class="kicker">Case</p>'
-        f'<p class="kpi-note">{html.escape(case_note)}</p>'
         f"{role_lines}"
         "</div>",
         unsafe_allow_html=True,
@@ -161,12 +161,27 @@ def _case_block(
         with st.expander("How missing data is recorded", expanded=False):
             st.markdown(f"<p>{safe_inline(null_policy)}</p>", unsafe_allow_html=True)
     limitations = meta.get("limitations")
+    if show_limits and isinstance(limitations, list) and limitations:
+        st.markdown(
+            '<div class="cockpit-card">'
+            '<p class="kicker">Limits of this artefact</p>'
+            '<div class="limits-grid">'
+            + "".join(f"<p>- {safe_inline(item)}</p>" for item in limitations)
+            + "</div></div>",
+            unsafe_allow_html=True,
+        )
+
+
+def _limits_card(meta: dict[str, Any]) -> None:
+    """The artefact's own limitations, rendered once in the limits column."""
+    limitations = meta.get("limitations")
     if isinstance(limitations, list) and limitations:
         st.markdown(
             '<div class="cockpit-card">'
             '<p class="kicker">Limits of this artefact</p>'
+            '<div class="limits-grid">'
             + "".join(f"<p>- {safe_inline(item)}</p>" for item in limitations)
-            + "</div>",
+            + "</div></div>",
             unsafe_allow_html=True,
         )
 
@@ -254,8 +269,8 @@ def render_physics_tab(loaders: Any, meta: dict[str, Any] | None) -> None:
             case_roles if isinstance(case_roles, Mapping) else None,
             median,
             median_unit,
+            show_limits=False,
         )
-        _availability_block(loaders, meta)
     else:
         st.markdown(
             '<div class="cockpit-card is-empty">'
@@ -265,65 +280,7 @@ def render_physics_tab(loaders: Any, meta: dict[str, Any] | None) -> None:
             unsafe_allow_html=True,
         )
 
-    science_summary = limits.get("science_section_1") if isinstance(limits, Mapping) else None
-    physics = limits.get("physics") if isinstance(limits, Mapping) else None
-    if science_summary or physics:
-        with st.expander("How this measurement works (SAR physics)", expanded=False):
-            st.markdown(
-                '<p class="kpi-note"><strong>SAR physics and regime classification</strong> · from '
-                "docs/science-guide.md §1, README.md and the frozen contract in "
-                "src/domain/contracts.py.</p>",
-                unsafe_allow_html=True,
-            )
-            if science_summary:
-                st.markdown(f"<p>{safe_inline(science_summary)}</p>", unsafe_allow_html=True)
-            if isinstance(physics, list) and physics:
-                by_title = {
-                    str(item.get("title", "")).lower(): str(item.get("text", ""))
-                    for item in physics
-                    if isinstance(item, Mapping)
-                }
-                topics = (
-                    "1. L-Band vs C-Band Penetration",
-                    "2. Surface Roughness & Dielectric Constant",
-                    "3. Elastic vs Inelastic Regime R",
-                )
-                topic = st.radio(
-                    "Physics topic",
-                    options=list(topics),
-                    horizontal=True,
-                    key=f"physics-topic-{(meta or {}).get('case_id') or 'case'}",
-                )
-                if topic.startswith("1."):
-                    st.markdown(
-                        f'<p>{safe_inline(by_title.get("l-band vs c-band", ""))}</p>',
-                        unsafe_allow_html=True,
-                    )
-                elif topic.startswith("2."):
-                    st.markdown(
-                        f'<p><strong>Surface roughness.</strong> '
-                        f'{safe_inline(by_title.get("surface roughness", ""))}</p>',
-                        unsafe_allow_html=True,
-                    )
-                    st.markdown(
-                        f'<p><strong>Dielectric constant.</strong> '
-                        f'{safe_inline(by_title.get("dielectric constant", ""))}</p>',
-                        unsafe_allow_html=True,
-                    )
-                else:
-                    st.markdown(
-                        '<p>A <strong>secular</strong> trend is motion that does not come back; a '
-                        "<strong>seasonal</strong> term is the part that does. The regime index compares "
-                        "them; the class says which one dominates the cell.</p>",
-                        unsafe_allow_html=True,
-                    )
-            st.markdown(
-                '<p class="detail-line"><strong>Regime index R = |velocity| / seasonal amplitude:</strong> '
-                "R &gt; 2 Inelastic (secular trend dominates, permanent compaction) · "
-                "1 &le; R &le; 2 Transitional (mixed regime) · "
-                "R &lt; 1 Elastic (seasonal cycle dominates, recoverable motion).</p>",
-                unsafe_allow_html=True,
-            )
+    identity_col, limits_col = st.columns([1, 1], gap="large")
 
     caveat = limits.get("section_8_caveat") if isinstance(limits, dict) else None
     caveat_lead, caveat_rest = split_caveat(caveat)
@@ -332,40 +289,121 @@ def render_physics_tab(loaders: Any, meta: dict[str, Any] | None) -> None:
     note_lines = [f'<p class="tech-line caveat">{safe_inline(caveat_rest)}</p>'] if caveat_rest else []
     note_lines += [f'<p class="tech-line item">- {safe_inline(item)}</p>' for item in technical]
     notes_count = len(note_lines)
-    st.markdown(
-        '<div class="cockpit-card">'
-        '<p class="kicker">Known caveat</p>'
-        '<p class="kpi-note">From the project documentation, not from the case artefact.</p>'
-        + (f'<p class="caveat-lead">{safe_inline(caveat_lead)}</p>' if caveat_lead
-           else "<p>No documented caveat for this case.</p>")
-        + "</div>",
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        '<div class="cockpit-card">'
-        '<p class="kicker">Known limitations</p>'
-        '<p class="kpi-note">From the project documentation, not from the case artefact.</p>'
-        + ("".join(f'<p class="limit-line">- {safe_inline(item)}</p>' for item in visible)
-           or "<p>No reader-level limitations; see the technical notes below.</p>")
-        + "</div>",
-        unsafe_allow_html=True,
-    )
-    if notes_count:
-        with st.expander(f"Technical notes ({notes_count})", expanded=False):
-            st.caption(
-                "Same loader text, not trimmed. Internal ids, file paths and long method notes "
-                "live here."
-            )
-            st.markdown("".join(note_lines), unsafe_allow_html=True)
 
-    shown = _public_meta(meta)
-    if not shown:
-        meta_note = "The loader did not return meta.json."
-    else:
-        meta_note = "The case identifier is shown above and omitted from the record below."
-    with st.expander("Other meta.json fields", expanded=False):
-        st.caption(meta_note)
+    with identity_col:
         st.markdown(
-            format_json_block(shown, "meta.json contents"),
+            '<p class="group-head">Identity, provenance and reading limits</p>',
             unsafe_allow_html=True,
         )
+        if has_meta:
+            _availability_block(loaders, meta)
+
+        st.markdown(
+            '<div class="cockpit-card">'
+            '<p class="kicker">Known limitations</p>'
+            '<p class="kpi-note">From the project documentation, not from the case artefact.</p>'
+            '<div class="limits-grid">'
+            + (
+                "".join(f'<p class="limit-line">- {safe_inline(item)}</p>' for item in visible)
+                or "<p>No reader-level limitations; see the technical notes below.</p>"
+            )
+            + "</div></div>",
+            unsafe_allow_html=True,
+        )
+
+        science_summary = limits.get("science_section_1") if isinstance(limits, Mapping) else None
+        physics = limits.get("physics") if isinstance(limits, Mapping) else None
+        if science_summary or physics:
+            with st.expander("How this measurement works (SAR physics)", expanded=False):
+                st.markdown(
+                    '<p class="kpi-note"><strong>SAR physics and regime classification</strong> · from '
+                    "docs/science-guide.md §1, README.md and the frozen contract in "
+                    "src/domain/contracts.py.</p>",
+                    unsafe_allow_html=True,
+                )
+                if science_summary:
+                    st.markdown(f"<p>{safe_inline(science_summary)}</p>", unsafe_allow_html=True)
+                if isinstance(physics, list) and physics:
+                    by_title = {
+                        str(item.get("title", "")).lower(): str(item.get("text", ""))
+                        for item in physics
+                        if isinstance(item, Mapping)
+                    }
+                    topics = (
+                        "1. L-Band vs C-Band Penetration",
+                        "2. Surface Roughness & Dielectric Constant",
+                        "3. Elastic vs Inelastic Regime R",
+                    )
+                    topic = st.radio(
+                        "Physics topic",
+                        options=list(topics),
+                        horizontal=True,
+                        key=f"physics-topic-{(meta or {}).get('case_id') or 'case'}",
+                    )
+                    if topic.startswith("1."):
+                        st.markdown(
+                            f'<p>{safe_inline(by_title.get("l-band vs c-band", ""))}</p>',
+                            unsafe_allow_html=True,
+                        )
+                    elif topic.startswith("2."):
+                        st.markdown(
+                            f'<p><strong>Surface roughness.</strong> '
+                            f'{safe_inline(by_title.get("surface roughness", ""))}</p>',
+                            unsafe_allow_html=True,
+                        )
+                        st.markdown(
+                            f'<p><strong>Dielectric constant.</strong> '
+                            f'{safe_inline(by_title.get("dielectric constant", ""))}</p>',
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        st.markdown(
+                            '<p>A <strong>secular</strong> trend is motion that does not come back; a '
+                            "<strong>seasonal</strong> term is the part that does. The regime index compares "
+                            "them; the class says which one dominates the cell.</p>",
+                            unsafe_allow_html=True,
+                        )
+                st.markdown(
+                    '<p class="detail-line"><strong>Regime index R = |velocity| / seasonal amplitude:</strong> '
+                    "R &gt; 2 Inelastic (secular trend dominates, permanent compaction) · "
+                    "1 &le; R &le; 2 Transitional (mixed regime) · "
+                    "R &lt; 1 Elastic (seasonal cycle dominates, recoverable motion).</p>",
+                    unsafe_allow_html=True,
+                )
+
+        shown = _public_meta(meta)
+        if not shown:
+            meta_note = "The loader did not return meta.json."
+        else:
+            meta_note = "The case identifier is shown above and omitted from the record below."
+        with st.expander("Other meta.json fields", expanded=False):
+            st.caption(meta_note)
+            st.markdown(
+                format_json_block(shown, "meta.json contents"),
+                unsafe_allow_html=True,
+            )
+
+    with limits_col:
+        st.markdown('<p class="group-head">Artefact limits and caveats</p>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="cockpit-card">'
+            '<p class="kicker">Known caveat</p>'
+            '<p class="kpi-note">From the project documentation, not from the case artefact.</p>'
+            + (
+                f'<p class="caveat-lead">{safe_inline(caveat_lead)}</p>'
+                if caveat_lead
+                else "<p>No documented caveat for this case.</p>"
+            )
+            + "</div>",
+            unsafe_allow_html=True,
+        )
+        if has_meta:
+            _limits_card(meta)
+        if notes_count:
+            with st.expander(f"Technical notes ({notes_count})", expanded=False):
+                st.caption(
+                    "Same loader text, not trimmed. Internal ids, file paths and long method notes "
+                    "live here."
+                )
+                st.markdown("".join(note_lines), unsafe_allow_html=True)
+

@@ -285,21 +285,74 @@ def _case_options(loaders: Any, name: str, case_id: str) -> tuple[str, ...]:
         return tuple(function())
 
 
+def _mission_chips(
+    filters: dict[str, Any] | None,
+    counts: dict[str, Any] | None,
+    coherence_floor: float | None,
+) -> str:
+    """Compact summary of what the map is showing: count plus active filters."""
+    chips: list[tuple[str, bool]] = []
+    shown = counts.get("shown") if isinstance(counts, dict) else None
+    total = counts.get("total") if isinstance(counts, dict) else None
+    if isinstance(shown, int) and isinstance(total, int):
+        chips.append((f"{shown} of {total} cells", False))
+    active = filters or {}
+    land = active.get("land_use")
+    if land:
+        chips.append((f"Land · {choice_label(str(land))}", True))
+    risk = active.get("risk_level")
+    if risk:
+        chips.append((f"Risk · {choice_label(str(risk))}", True))
+    threshold = active.get("coherence_min")
+    if (
+        isinstance(threshold, (int, float))
+        and not isinstance(threshold, bool)
+        and isinstance(coherence_floor, (int, float))
+        and abs(float(threshold) - float(coherence_floor)) > 1e-9
+    ):
+        chips.append((f"Coherence ≥ {float(threshold):g}", True))
+    if active.get("extrude_3d"):
+        chips.append(("3D · on", True))
+    return "".join(
+        f'<span class="mission-chip{" is-active" if is_active else ""}">{html.escape(chip)}</span>'
+        for chip, is_active in chips
+    )
+
+
 def render_header(
     meta: dict[str, Any] | None,
     case_label: str | None = None,
+    filters: dict[str, Any] | None = None,
+    counts: dict[str, Any] | None = None,
+    coherence_floor: float | None = None,
 ) -> None:
     line = telemetry_line(meta)
     telemetry = f'<p class="telemetry">{html.escape(line)}</p>' if line else ""
+    # On a phone the full telemetry line is hidden by theme.py. A compact chip keeps the
+    # same artefact-sourced values one tap away instead of dropping them from the view.
+    telemetry_details = ""
+    if line:
+        telemetry_details = (
+            '<details class="telemetry-disclosure">'
+            '<summary class="mission-chip telemetry-chip">Telemetry</summary>'
+            f'<p class="telemetry telemetry-detail">{html.escape(line)}</p>'
+            "</details>"
+        )
     case = (
         f'<span class="case-pill" aria-label="Active case">{html.escape(case_label)}</span>'
         if case_label
         else ""
     )
+    chips = _mission_chips(filters, counts, coherence_floor)
+    facts = f'<div class="mission-facts">{chips}</div>' if chips else ""
     st.markdown(
         '<header class="mission-bar">'
+        '<div class="mission-line">'
         f'<h1 class="mission-title">{html.escape(TITLE)}{case}</h1>'
+        f"{facts}"
+        "</div>"
         f"{telemetry}"
+        f"{telemetry_details}"
         "</header>",
         unsafe_allow_html=True,
     )
@@ -322,10 +375,11 @@ def render_filters(
     theme_labels = {"system": "System", "light": "Light", "dark": "Dark"}
     if st.session_state.get("ui_theme_mode") not in theme_labels:
         st.session_state.ui_theme_mode = "system"
-    # Streamlit has no viewport query on the server. A collapsed-by-choice
-    # expander is the portable way to keep filters from owning the first screen
-    # on a phone while staying open on desktop. `?compact=1` ships it closed.
+    # Streamlit has no viewport query on the server. The filter strip starts closed
+    # on every viewport so the map keeps the first screen; the header chips carry
+    # the live summary. `?filters=open` reopens it for a deep link or a demo.
     compact = st.query_params.get("compact") == "1"
+    expanded = st.query_params.get("filters") == "open" and not compact
     shown = counts.get("shown") if isinstance(counts, dict) else None
     total = counts.get("total") if isinstance(counts, dict) else None
     filter_title = (
@@ -333,7 +387,7 @@ def render_filters(
         if isinstance(shown, int) and isinstance(total, int)
         else "Filters"
     )
-    with st.expander(filter_title, expanded=not compact, key="filters"):
+    with st.expander(filter_title, expanded=expanded, key="filters"):
         case_col, land_col, coherence_col, risk_col, extrude_col, theme_col = st.columns(6)
         with case_col:
             st.selectbox(
@@ -553,6 +607,9 @@ def render_app() -> None:
     render_header(
         meta if isinstance(meta, dict) else None,
         labels.get(st.session_state.filter_case_id),
+        current_filters,
+        counts if isinstance(counts, dict) else None,
+        coherence_floor,
     )
     filters = render_filters(
         case_ids,

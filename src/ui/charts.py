@@ -9,6 +9,7 @@ detection-limit reference line when the artefact declares one.
 
 from __future__ import annotations
 
+import html
 from typing import Any, Mapping
 
 import plotly.graph_objects as go
@@ -199,6 +200,79 @@ def bars_figure(
     return figure
 
 
+STRIP_HEIGHT = 104
+
+
+def velocity_strip_figure(
+    distribution: Mapping[str, Any],
+    cell: Mapping[str, Any] | None = None,
+) -> go.Figure:
+    """p05 — median — p95 on one labelled axis; the selected cell is a separate marker.
+
+    Every x value comes from the domain hook; this function only draws them. The strip has
+    no density or histogram: the artefacts do not publish a cell-density estimate.
+    """
+    palette = active_palette()
+    unit = str(distribution.get("unit") or UNIT_NOT_DECLARED)
+    provenance = str(distribution.get("provenance_id") or SOURCE_NOT_DECLARED)
+    figure = go.Figure()
+    p05 = distribution.get("p05_mm_yr")
+    p95 = distribution.get("p95_mm_yr")
+    if not isinstance(p05, (int, float)) or not isinstance(p95, (int, float)):
+        return figure
+    figure.add_trace(
+        go.Scatter(
+            x=[p05, p95],
+            y=[0, 0],
+            mode="lines",
+            line={"color": palette["accent"], "width": 2},
+            hoverinfo="skip",
+        )
+    )
+    for key, label, color in (
+        ("p05_mm_yr", "p05", palette["muted"]),
+        ("median_mm_yr", "median", palette["coherence"]),
+        ("p95_mm_yr", "p95", palette["muted"]),
+    ):
+        value = distribution.get(key)
+        if isinstance(value, (int, float)):
+            figure.add_trace(
+                go.Scatter(
+                    x=[value],
+                    y=[0],
+                    mode="markers",
+                    name=label,
+                    marker={"size": 9, "color": color},
+                    hovertemplate=f"{label} %{{x:.2f}} {unit}<br>Provenance ID {provenance}<extra></extra>",
+                )
+            )
+    if isinstance(cell, Mapping) and isinstance(cell.get("velocity_mm_yr"), (int, float)):
+        figure.add_trace(
+            go.Scatter(
+                x=[cell["velocity_mm_yr"]],
+                y=[0],
+                mode="markers",
+                name="Selected cell",
+                marker={"size": 11, "color": palette["alert"], "symbol": "diamond"},
+                hovertemplate=(
+                    f"Selected cell %{{x:.2f}} {unit}<br>Provenance ID "
+                    f"{html.escape(str(cell.get('provenance_id') or provenance))}<extra></extra>"
+                ),
+            )
+        )
+    style_figure(
+        figure,
+        height=STRIP_HEIGHT,
+        x_title=f"Velocity ({unit})",
+        y_title="",
+        margin={"l": 52, "r": 18, "t": 20, "b": 34},
+    )
+    figure.update_layout(showlegend=True, legend={"orientation": "h", "y": 1.2, "x": 0})
+    figure.update_yaxes(visible=False, fixedrange=True)
+    figure.update_xaxes(fixedrange=True)
+    return figure
+
+
 def _line(series: list[dict[str, Any]] | None) -> None:
     if not series:
         st.caption("Series not declared by the backend.")
@@ -270,6 +344,25 @@ def render_series_tab(filters: dict[str, Any], loaders: Any, meta: dict[str, Any
     # The persistent demo banner lives in app.py; do not duplicate it per tab.
     case_id = filters.get("case_id")
     render_kpi_cards(_call(loaders, "get_series_kpis", case_id, filters))
+    # The five cards above are computed in src.domain.metrics. This line is the whole-case
+    # distribution the artefact publishes in meta.stats (or the filtered view's own quantiles).
+    distribution = _call(loaders, "get_velocity_distribution", case_id, filters)
+    if isinstance(distribution, dict):
+        unit = distribution.get("unit") or UNIT_NOT_DECLARED
+        quantiles = " … ".join(
+            f"{name} {format_number(distribution.get(key))}"
+            for name, key in (
+                ("p05", "p05_mm_yr"),
+                ("median", "median_mm_yr"),
+                ("p95", "p95_mm_yr"),
+            )
+            if distribution.get(key) is not None
+        )
+        if quantiles:
+            st.caption(
+                f"Velocity distribution · {quantiles} {unit} · "
+                f"{distribution.get('n_cells')} cells · {distribution.get('source')}"
+            )
     area_series = _call(loaders, "get_case_series", case_id, filters)
     selected_cell = st.session_state.get("selected_cell_id")
     detail = (
@@ -277,6 +370,15 @@ def render_series_tab(filters: dict[str, Any], loaders: Any, meta: dict[str, Any
         if selected_cell and case_id
         else None
     )
+    if isinstance(distribution, dict) and distribution.get("p05_mm_yr") is not None:
+        figure = velocity_strip_figure(distribution, detail if isinstance(detail, dict) else None)
+        if figure.data:
+            st.plotly_chart(
+                figure,
+                width="stretch",
+                theme=None,
+                config={"displayModeBar": False},
+            )
     cell_series = detail.get("series") if isinstance(detail, dict) else None
     cell_scope = detail.get("series_scope") if isinstance(detail, dict) else None
     if isinstance(cell_series, list) and cell_series and cell_scope == "cell":

@@ -15,6 +15,7 @@ import streamlit as st
 
 from src.ui.formatters import (
     CONTEXT_LAYER_GLOSSARY,
+    NOT_DECLARED,
     choice_label,
     humanize,
     risk_label,
@@ -59,7 +60,10 @@ def _visible_frame(frame: pd.DataFrame) -> pd.DataFrame:
     return frame
 
 
-def _render_table(frame: pd.DataFrame, provenance: str | None = None) -> str:
+PAGE_SIZE = 25
+
+
+def _render_table(frame: pd.DataFrame, provenance: str | None = None, page: int = 1) -> str:
     shown = _visible_frame(frame)
     note = (
         f'<p class="kpi-note">Provenance ID {html.escape(provenance)}</p>'
@@ -68,7 +72,7 @@ def _render_table(frame: pd.DataFrame, provenance: str | None = None) -> str:
     )
     headers = "".join(f"<th>{html.escape(humanize(col))}</th>" for col in shown.columns)
     body_rows: list[str] = []
-    for row in shown.itertuples(index=False):
+    for index, row in enumerate(shown.itertuples(index=False)):
         risk = str(getattr(row, "risk_level", "") or "")
         row_class = ' class="row-alert"' if risk == "critico" else (
             ' class="row-warn"' if risk == "moderado" else ""
@@ -82,15 +86,28 @@ def _render_table(frame: pd.DataFrame, provenance: str | None = None) -> str:
                 cells.append(f"<td>{html.escape(risk_label(text))}</td>")
             else:
                 cells.append(f"<td>{html.escape(text)}</td>")
-        body_rows.append(f"<tr{row_class}>{''.join(cells)}</tr>")
+        row_page = index // PAGE_SIZE + 1
+        hidden_attr = ' hidden aria-hidden="true"' if row_page != page else ""
+        body_rows.append(
+            f'<tr{row_class} data-page="{row_page}"{hidden_attr}>{"".join(cells)}</tr>'
+        )
+    # All rows stay in the DOM (the artefact-parity tests read them), but off-page
+    # rows carry both `hidden`/`aria-hidden="true"` and `display: none !important`,
+    # removing them from layout, tab order and the accessibility tree.
     return (
         f"{note}"
-        '<div class="cockpit-table-wrap" role="region" aria-label="Context layers">'
-        '<table class="cockpit-table" aria-label="Context layer properties">'
+        f'<style>.cockpit-table[data-page="{page}"] tbody tr[data-page]:not([data-page="{page}"]) '
+        "{ display: none !important; }</style>"
+        '<div class="cockpit-table-wrap" role="region" aria-label="Context layers" tabindex="0">'
+        f'<table class="cockpit-table" data-page="{page}" aria-label="Context layer properties">'
         f"<thead><tr>{headers}</tr></thead>"
         f'<tbody>{"".join(body_rows)}</tbody>'
         "</table></div>"
     )
+
+
+def _set_page(key: str, value: int) -> None:
+    st.session_state[key] = max(1, int(value))
 
 
 def _stat_card(column: Any, label: str, value: str, note: str | None = None) -> None:
@@ -104,17 +121,63 @@ def _stat_card(column: Any, label: str, value: str, note: str | None = None) -> 
     )
 
 
-def _layer_counts(rows: list[dict[str, Any]], summary: dict[str, Any]) -> dict[str, int]:
-    """Prefer the loader summary; otherwise count the delivered features."""
+def _render_distance_summary(loaders: Any, case_id: Any, filters: dict[str, Any]) -> None:
+    """Delivered nearest-cell distances as descriptive values; no near/far class exists.
+
+    The domain computes the summary from `distance_m`. Neither the artefact, the contract
+    nor the config declares a "far" threshold, so this view never labels a distance. The
+    existing envelope caveat above already explains why a representative point can be far.
+    """
+    function = getattr(loaders, "get_distance_summary", None)
+    if function is None:
+        return
+    try:
+        summary = function(case_id, filters)
+    except TypeError:
+        return
+    if not isinstance(summary, dict) or not summary.get("n_features"):
+        return
+    unit = str(summary.get("unit") or "m")
+
+    def value(key: str) -> str:
+        number = summary.get(key)
+        if isinstance(number, (int, float)) and not isinstance(number, bool):
+            return f"{number:g} {unit}"
+        return NOT_DECLARED
+
+    cards = st.columns(3)
+    _stat_card(cards[0], "Minimum distance", value("min_m"), "nearest filtered cell")
+    _stat_card(cards[1], "Median distance", value("median_m"), "nearest filtered cell")
+    _stat_card(cards[2], "Maximum distance", value("max_m"), "nearest filtered cell")
+    st.caption(
+        "Delivered nearest-cell distances, descriptive only. No distance band is declared in "
+        "the artefact or the contract, so these values are not classified. Source: the case "
+        "artefact credited with the context table below."
+    )
+
+
+def _row_counts(loaders: Any, rows: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+    """Ask the domain (through the loader) to count delivered rows; never count in the UI."""
+    function = getattr(loaders, "summarize_context_rows", None)
+    if function is not None:
+        try:
+            result = function(rows)
+        except TypeError:
+            result = None
+        if isinstance(result, dict):
+            return result
+    return {"layers": {}, "by_risk": {}}
+
+
+def _layer_counts(
+    summary: dict[str, Any],
+    counted: dict[str, dict[str, int]],
+) -> dict[str, int]:
+    """Prefer the artefact summary; otherwise use the domain's count of the rows."""
     layers = summary.get("layers") if isinstance(summary, dict) else None
     if isinstance(layers, dict) and layers:
         return {str(key): int(value) for key, value in layers.items()}
-    counts: dict[str, int] = {}
-    for row in rows:
-        layer = str(row.get("layer") or "")
-        if layer:
-            counts[layer] = counts.get(layer, 0) + 1
-    return counts
+    return {str(key): int(value) for key, value in counted.get("layers", {}).items()}
 
 
 def _load(loaders: Any, case_id: Any, filters: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any], str | None]:
@@ -215,7 +278,7 @@ def render_hazard_tab(filters: dict[str, Any], loaders: Any) -> None:
         )
         return
 
-    counts = _layer_counts(rows, summary)
+    counts = _layer_counts(summary, _row_counts(loaders, rows))
     total = summary.get("n_features")
     if not isinstance(total, int) or isinstance(total, bool):
         total = len(rows)
@@ -277,8 +340,10 @@ def render_hazard_tab(filters: dict[str, Any], loaders: Any) -> None:
         shown = shown[shown["risk_level"] == picked_risk]
 
     has_exposure = source == "exposure" and "risk_level" in shown.columns
-    critical = int((shown["risk_level"] == "critico").sum()) if has_exposure else 0
-    moderate = int((shown["risk_level"] == "moderado").sum()) if has_exposure else 0
+    shown_counts = _row_counts(loaders, shown.to_dict(orient="records"))
+    by_risk = shown_counts.get("by_risk", {})
+    critical = int(by_risk.get("critico", 0)) if has_exposure else 0
+    moderate = int(by_risk.get("moderado", 0)) if has_exposure else 0
 
     note = (
         "Delivered context only, not a hazard assessment. "
@@ -299,12 +364,44 @@ def render_hazard_tab(filters: dict[str, Any], loaders: Any) -> None:
     )
     if exposure_note:
         st.markdown(exposure_note, unsafe_allow_html=True)
+    if has_exposure:
+        _render_distance_summary(loaders, case_id, filters)
     st.caption(context_caption(shown))
     st.markdown(
         f"<p>{len(shown)} features shown of {len(frame)}</p>",
         unsafe_allow_html=True,
     )
-    st.markdown(_render_table(shown, single_source), unsafe_allow_html=True)
+    pages = max(1, (len(shown) + PAGE_SIZE - 1) // PAGE_SIZE)
+    page_key = f"ctx-page-{case_id}"
+    page = st.session_state.get(page_key, 1)
+    if not isinstance(page, int) or isinstance(page, bool):
+        page = 1
+    page = min(max(1, page), pages)
+    st.session_state[page_key] = page
+    pager = st.columns([1, 2, 1], vertical_alignment="center")
+    with pager[0]:
+        st.button(
+            "Previous page",
+            key=f"ctx-prev-{case_id}",
+            disabled=page <= 1,
+            on_click=_set_page,
+            args=(page_key, page - 1),
+        )
+    with pager[1]:
+        st.markdown(
+            f'<p class="context-pager" role="status">Page {page} / {pages} · '
+            f"{PAGE_SIZE} rows per page</p>",
+            unsafe_allow_html=True,
+        )
+    with pager[2]:
+        st.button(
+            "Next page",
+            key=f"ctx-next-{case_id}",
+            disabled=page >= pages,
+            on_click=_set_page,
+            args=(page_key, page + 1),
+        )
+    st.markdown(_render_table(shown, single_source, page), unsafe_allow_html=True)
     # `CONTEXT_LAYER_GLOSSARY` was imported here and never rendered, so the video script promised a glossary no
     # reader could find. Four layers with one line each is cheap, collapsed so it never displaces the table.
     if CONTEXT_LAYER_GLOSSARY:

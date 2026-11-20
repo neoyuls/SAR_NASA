@@ -35,3 +35,8 @@ orangeColor = "#F59E0B"
 greenColor = "#10B981"
 blueColor = "#06B6D4"
 baseRadius = "4px"
+
+# Presentation chrome: keep the cockpit's own header as the only toolbar. The theme
+# tokens above still let Streamlit follow prefers-color-scheme (AGENTS.md design rules).
+[client]
+toolbarMode = "minimal"

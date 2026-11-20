@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import pathlib
 import re
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -26,11 +26,21 @@ from src.data.loaders import (
 from src.domain import contracts as C
 from src.domain.filters import FilterCriteria, apply_filters
 from src.domain.map_adapter import (
+    COLUMN_AMPLITUDE_M,
+    COLUMN_BASELINE_M,
     ScaleMode,
     build_map_payload,
     compute_view_state,
 )
-from src.domain.metrics import compute_kpis
+from src.domain.metrics import (
+    cell_velocity_context,
+    coherence_bounds,
+    compute_kpis,
+    context_row_counts,
+    distance_summary,
+    threshold_counts,
+    velocity_distribution,
+)
 
 _SHARED_LABELS = frozenset(
     {"shared", "común a todos los casos", "comun a todos los casos", "compartida"}
@@ -273,6 +283,89 @@ def get_layer_counts(
     }
 
 
+def get_velocity_distribution(
+    case_id: str,
+    filters: Mapping[str, Any] | None = None,
+    *,
+    processed_dir: pathlib.Path | str = DEFAULT_PROCESSED_DIR,
+) -> dict[str, Any]:
+    """p05 / median / p95 of the filtered view, from `meta.stats` for the whole case."""
+    bundle = load_case_bundle(case_id, processed_dir=processed_dir)
+    view = apply_filters(bundle, _dict_to_criteria(filters))
+    distribution = velocity_distribution(view.grid, bundle.meta.get("stats"))
+    return {
+        "n_cells": distribution.n_cells,
+        "p05_mm_yr": distribution.p05_mm_yr,
+        "median_mm_yr": distribution.median_mm_yr,
+        "p95_mm_yr": distribution.p95_mm_yr,
+        "min_mm_yr": distribution.min_mm_yr,
+        "max_mm_yr": distribution.max_mm_yr,
+        "source": distribution.source,
+        "unit": distribution.unit,
+        "provenance_id": _case_provenance_id(bundle),
+    }
+
+
+def get_cell_velocity_context(
+    case_id: str,
+    cell_id: str,
+    filters: Mapping[str, Any] | None = None,
+    *,
+    processed_dir: pathlib.Path | str = DEFAULT_PROCESSED_DIR,
+) -> dict[str, Any] | None:
+    """Descriptive position of one cell in the view's velocity distribution."""
+    bundle = load_case_bundle(case_id, processed_dir=processed_dir)
+    view = apply_filters(bundle, _dict_to_criteria(filters))
+    return cell_velocity_context(view.grid, str(cell_id), bundle.meta.get("stats"))
+
+
+def get_coherence_summary(
+    case_id: str,
+    filters: Mapping[str, Any] | None = None,
+    *,
+    processed_dir: pathlib.Path | str = DEFAULT_PROCESSED_DIR,
+) -> dict[str, Any]:
+    """Observed min/max coherence of the view, plus the declared published floor."""
+    bundle = load_case_bundle(case_id, processed_dir=processed_dir)
+    view = apply_filters(bundle, _dict_to_criteria(filters))
+    observed = coherence_bounds(view.grid)
+    thresholds = bundle.meta.get("thresholds") or {}
+    floor = thresholds.get("coherence_min")
+    return {
+        **observed,
+        "declared_min": floor if isinstance(floor, (int, float)) and not isinstance(floor, bool) else None,
+        "provenance_id": _case_provenance_id(bundle),
+    }
+
+
+def summarize_context_rows(rows: Sequence[Mapping[str, Any]]) -> dict[str, dict[str, int]]:
+    """Count the context rows the UI is about to show, in the domain layer."""
+    return context_row_counts(rows)
+
+
+def get_distance_summary(
+    case_id: str,
+    filters: Mapping[str, Any] | None = None,
+    *,
+    processed_dir: pathlib.Path | str = DEFAULT_PROCESSED_DIR,
+) -> dict[str, Any]:
+    """Descriptive distance statistics for the exposure cross-reference (no far threshold)."""
+    exposure = get_context_exposure(case_id, filters, processed_dir=processed_dir)
+    rows = exposure.get("features") if isinstance(exposure, dict) else None
+    summary = distance_summary(rows or [])
+    summary["provenance_id"] = _case_provenance_id(load_case_bundle(case_id, processed_dir=processed_dir))
+    return summary
+
+
+def get_extrusion_presentation() -> dict[str, Any]:
+    """Map-adapter presentation constants: column height is a camera choice, not a measurement."""
+    return {
+        "baseline_m": COLUMN_BASELINE_M,
+        "amplitude_m": COLUMN_AMPLITUDE_M,
+        "unit": "m",
+    }
+
+
 def get_view_state(
     case_id: str,
     *,
@@ -314,7 +407,8 @@ def get_map_kpis(
     view = apply_filters(bundle, _dict_to_criteria(filters))
     kpis = compute_kpis(view)
     prov_id = _case_provenance_id(bundle)
-    coh_min = float(view.grid["coherence"].min()) if not view.grid.empty else None
+    coherence = coherence_bounds(view.grid)
+    coh_min = coherence["min"]
     return [
         {
             "label": "Median velocity",
@@ -461,14 +555,11 @@ def get_series_kpis(
     coh_floor = float((bundle.meta.get("thresholds") or {}).get("coherence_min", 0.35))
 
     total = len(view.grid)
-    if total == 0:
-        pct_above = None
-        pct_coh = None
-    else:
-        vels = view.grid["velocity_mm_yr"].to_numpy(dtype=np.float64)
-        cohs = view.grid["coherence"].to_numpy(dtype=np.float64)
-        pct_above = round(float((np.abs(vels) >= C.NULL_RESULT_MM_YR).mean() * 100.0), 1)
-        pct_coh = round(float((cohs >= coh_floor).mean() * 100.0), 1)
+    # Counts and shares belong to src.domain.metrics; this bridge only formats the cards.
+    above = threshold_counts(view.grid["velocity_mm_yr"], C.NULL_RESULT_MM_YR)
+    pct_above = above.percentage
+    coherent = threshold_counts(view.grid["coherence"], coh_floor, absolute=False)
+    pct_coh = coherent.percentage
 
     return [
         {
@@ -981,8 +1072,12 @@ __all__ = [
     "get_case_series",
     "get_cell_detail",
     "get_cell_export",
+    "get_cell_velocity_context",
     "get_color_scale",
     "get_context_exposure",
+    "get_coherence_summary",
+    "get_distance_summary",
+    "get_extrusion_presentation",
     "get_filtered_export_csv",
     "get_land_use_bars",
     "get_layer_counts",
@@ -991,6 +1086,8 @@ __all__ = [
     "get_scale_comparison",
     "get_series_kpis",
     "get_signal_status",
+    "summarize_context_rows",
+    "get_velocity_distribution",
     "get_view_state",
     "load_availability",
     "load_context_layers",

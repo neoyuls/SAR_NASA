@@ -65,6 +65,31 @@ class RiskBreakdown:
 
 
 @dataclass(frozen=True)
+class VelocityDistribution:
+    """Published/filtered velocity distribution. Every value is a rate in mm/year."""
+
+    n_cells: int
+    p05_mm_yr: float | None
+    median_mm_yr: float | None
+    p95_mm_yr: float | None
+    min_mm_yr: float | None
+    max_mm_yr: float | None
+    #: `meta.stats` when the view is the whole published case, otherwise the filtered grid.
+    source: str
+    unit: str = C.VELOCITY_UNIT
+
+
+@dataclass(frozen=True)
+class ThresholdCounts:
+    """Count and share of cells at or above a *declared* absolute threshold."""
+
+    threshold: float
+    n_cells: int
+    n_matching: int
+    percentage: float | None
+
+
+@dataclass(frozen=True)
 class CaseKPIs:
     """Reactive KPI bundle computed from a `FilteredCaseView`."""
 
@@ -209,6 +234,163 @@ def _compute_risk_breakdown(grid: pd.DataFrame) -> RiskBreakdown:
     fractions = {level: counts[level] / total for level in C.RISK_LEVELS}
     percentages = {level: round(fractions[level] * 100.0, 2) for level in C.RISK_LEVELS}
     return RiskBreakdown(counts=counts, fractions=fractions, percentages=percentages)
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value))
+
+
+def velocity_distribution(
+    grid: pd.DataFrame,
+    stats: Mapping[str, Any] | None = None,
+) -> VelocityDistribution:
+    """Velocity percentiles for the *view*, reusing `meta.stats` for the whole published case.
+
+    A filtered subset is a different population, so its percentiles are recomputed here rather
+    than quoted from the whole-case artefact. This is the only place that computes them; the UI
+    and the loader never do.
+    """
+    published = stats if isinstance(stats, Mapping) else {}
+    if grid.empty or "velocity_mm_yr" not in grid.columns:
+        return VelocityDistribution(
+            n_cells=0,
+            p05_mm_yr=float(published["p05_velocity_mm_yr"]) if _is_number(published.get("p05_velocity_mm_yr")) else None,
+            median_mm_yr=(
+                float(published["median_velocity_mm_yr"])
+                if _is_number(published.get("median_velocity_mm_yr"))
+                else None
+            ),
+            p95_mm_yr=float(published["p95_velocity_mm_yr"]) if _is_number(published.get("p95_velocity_mm_yr")) else None,
+            min_mm_yr=None,
+            max_mm_yr=None,
+            source="meta.stats" if published else "no data",
+        )
+    values = grid["velocity_mm_yr"].to_numpy(dtype=np.float64)
+    n_cells = int(len(values))
+    whole_case = published.get("n_cells") == n_cells
+    source = "meta.stats" if whole_case else "filtered grid"
+
+    def pick(key: str, computed: float) -> float:
+        if whole_case and _is_number(published.get(key)):
+            return float(published[key])
+        return computed
+
+    return VelocityDistribution(
+        n_cells=n_cells,
+        p05_mm_yr=pick("p05_velocity_mm_yr", float(np.percentile(values, 5))),
+        median_mm_yr=pick("median_velocity_mm_yr", float(np.median(values))),
+        p95_mm_yr=pick("p95_velocity_mm_yr", float(np.percentile(values, 95))),
+        min_mm_yr=float(np.min(values)),
+        max_mm_yr=float(np.max(values)),
+        source=source,
+    )
+
+
+def threshold_counts(
+    values: Sequence[float] | np.ndarray,
+    threshold: float,
+    *,
+    absolute: bool = True,
+) -> ThresholdCounts:
+    """Count cells at or above a declared threshold (by |value| for signed magnitudes)."""
+    array = np.asarray(values, dtype=np.float64)
+    n_cells = int(array.size)
+    compared = np.abs(array) if absolute else array
+    matching = int(np.count_nonzero(compared >= float(threshold)))
+    percentage = round(matching / n_cells * 100.0, 1) if n_cells else None
+    return ThresholdCounts(
+        threshold=float(threshold),
+        n_cells=n_cells,
+        n_matching=matching,
+        percentage=percentage,
+    )
+
+
+def coherence_bounds(grid: pd.DataFrame) -> dict[str, Any]:
+    """Observed dimensionless coherence bounds of the view (never a re-declared threshold)."""
+    if grid.empty or "coherence" not in grid.columns:
+        return {"n_cells": 0, "min": None, "max": None, "mean": None}
+    values = grid["coherence"].to_numpy(dtype=np.float64)
+    return {
+        "n_cells": int(values.size),
+        "min": float(np.min(values)),
+        "max": float(np.max(values)),
+        "mean": float(np.mean(values)),
+    }
+
+
+def cell_velocity_context(
+    grid: pd.DataFrame,
+    cell_id: str,
+    stats: Mapping[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Place one published cell against the view's velocity distribution.
+
+    The band is descriptive (p05 / median / p95), not a risk band and not a threshold.
+    """
+    if grid.empty or "cell_id" not in grid.columns or "velocity_mm_yr" not in grid.columns:
+        return None
+    match = grid.loc[grid["cell_id"].astype(str) == str(cell_id)]
+    if match.empty:
+        return None
+    velocity = float(match.iloc[0]["velocity_mm_yr"])
+    distribution = velocity_distribution(grid, stats)
+    position: str | None = None
+    if distribution.p05_mm_yr is not None and distribution.median_mm_yr is not None and distribution.p95_mm_yr is not None:
+        if velocity < distribution.p05_mm_yr:
+            position = "below p05"
+        elif velocity <= distribution.median_mm_yr:
+            position = "p05 to median"
+        elif velocity <= distribution.p95_mm_yr:
+            position = "median to p95"
+        else:
+            position = "above p95"
+    return {
+        "cell_id": str(cell_id),
+        "velocity_mm_yr": velocity,
+        "n_cells": distribution.n_cells,
+        "p05_mm_yr": distribution.p05_mm_yr,
+        "median_mm_yr": distribution.median_mm_yr,
+        "p95_mm_yr": distribution.p95_mm_yr,
+        "position": position,
+        "source": distribution.source,
+        "unit": C.VELOCITY_UNIT,
+    }
+
+
+def context_row_counts(rows: Sequence[Mapping[str, Any]]) -> dict[str, dict[str, int]]:
+    """Counts of delivered context rows by `layer` and by `risk_level` (no UI arithmetic)."""
+    layers: dict[str, int] = {}
+    risks: dict[str, int] = {}
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        layer = str(row.get("layer") or "")
+        risk = str(row.get("risk_level") or "")
+        if layer:
+            layers[layer] = layers.get(layer, 0) + 1
+        if risk:
+            risks[risk] = risks.get(risk, 0) + 1
+    return {"layers": layers, "by_risk": risks}
+
+
+def distance_summary(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Descriptive nearest-cell distance statistics; no near/far classification is defined."""
+    values = [
+        float(row["distance_m"])
+        for row in rows
+        if isinstance(row, Mapping) and _is_number(row.get("distance_m"))
+    ]
+    if not values:
+        return {"n_features": 0, "min_m": None, "median_m": None, "max_m": None, "unit": "m"}
+    array = np.asarray(values, dtype=np.float64)
+    return {
+        "n_features": int(array.size),
+        "min_m": float(np.min(array)),
+        "median_m": float(np.median(array)),
+        "max_m": float(np.max(array)),
+        "unit": "m",
+    }
 
 
 def _fit_linear_trend_mm_yr(dates: Sequence[str], values_mm: np.ndarray) -> tuple[float | None, float | None]:
@@ -550,9 +732,17 @@ __all__ = [
     "ProvenanceBadge",
     "RiskBreakdown",
     "SeriesView",
+    "ThresholdCounts",
+    "VelocityDistribution",
     "VOLUME_UNIT",
     "build_city_comparison",
     "build_provenance_badge",
+    "cell_velocity_context",
+    "coherence_bounds",
+    "context_row_counts",
     "compute_kpis",
+    "distance_summary",
     "extract_series_view",
+    "threshold_counts",
+    "velocity_distribution",
 ]

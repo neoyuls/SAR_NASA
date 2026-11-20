@@ -16,10 +16,11 @@ from typing import Any, Callable
 import pydeck as pdk
 import streamlit as st
 
-from src.ui.color_scale import FALLBACK_DOMAIN, STOPS, color_for
+from src.ui.color_scale import FALLBACK_DOMAIN, color_for
 from src.ui.components import empty_state
 from src.ui.formatters import (
     NOT_DECLARED,
+    NOT_FITTED,
     SCALE_LABELS,
     UNIT_NOT_DECLARED,
     format_number,
@@ -27,7 +28,7 @@ from src.ui.formatters import (
     is_shared_scale,
     risk_label,
 )
-from src.ui.theme import MAP_RAMPS, MAP_RAMP_LABELS, active_palette, reported_scheme, style_figure
+from src.ui.theme import MAP_RAMPS, MAP_RAMP_LABELS, active_palette, map_ramp, reported_scheme, style_figure
 
 LAYER_ID = "h3-cells"
 MAP_HEIGHT = 560
@@ -143,14 +144,10 @@ def _legend_inline(scale: dict[str, Any], mode: str, ramp: str = "classic") -> s
     vmax = scale.get("max")
     unit = scale.get("unit") or UNIT_NOT_DECLARED
     metric = scale.get("metric") or "delta_change"
-    stops = scale.get("stops") if ramp == "classic" else None
-    if isinstance(stops, (list, tuple)) and stops:
-        gradient = ", ".join(html.escape(str(color)) for color in stops)
-    else:
-        chosen_stops = MAP_RAMPS.get(ramp, STOPS)
-        gradient = ", ".join(
-            f"rgb({red}, {green}, {blue})" for _, (red, green, blue, _alpha) in chosen_stops
-        )
+    chosen_stops = map_ramp(ramp, reported_scheme())
+    gradient = ", ".join(
+        f"rgb({red}, {green}, {blue})" for _, (red, green, blue, _alpha) in chosen_stops
+    )
     if isinstance(vmin, (int, float)) and isinstance(vmax, (int, float)):
         span = f"{format_number(vmin, 1)} … {format_number(vmax, 1)}"
     else:
@@ -326,7 +323,11 @@ def _stats_strip(items: list[tuple[Any, Any, Any]]) -> None:
     )
 
 
-def _inspector_groups(detail: dict[str, Any], case_id: str | None) -> None:
+def _inspector_groups(
+    detail: dict[str, Any],
+    case_id: str | None,
+    context: dict[str, Any] | None = None,
+) -> None:
     """Grouped cell read-out: Deformation, Quality, Provenance (compact, 3–4 lines each)."""
     risk = str(detail.get("risk_level") or "")
     unit = detail.get("unit") if isinstance(detail.get("unit"), str) else None
@@ -354,6 +355,30 @@ def _inspector_groups(detail: dict[str, Any], case_id: str | None) -> None:
                 _risk_hint(risk),
             ],
         ),
+    ]
+    if isinstance(context, dict) and context:
+        p05, median, p95 = (
+            context.get("p05_mm_yr"),
+            context.get("median_mm_yr"),
+            context.get("p95_mm_yr"),
+        )
+        position = context.get("position")
+        percentiles = " · ".join(
+            f"{name} {format_number(value)}"
+            for name, value in (("p05", p05), ("median", median), ("p95", p95))
+            if value is not None
+        )
+        groups.append(
+            (
+                "Distribution",
+                [
+                    f"Position: {humanize(position) if position else NOT_DECLARED}",
+                    f"{percentiles} {unit or UNIT_NOT_DECLARED}" if percentiles else NOT_DECLARED,
+                    f"Population: {context.get('n_cells')} cells · {context.get('source') or NOT_DECLARED}",
+                ],
+            )
+        )
+    groups.extend([
         (
             "Provenance",
             [
@@ -363,7 +388,7 @@ def _inspector_groups(detail: dict[str, Any], case_id: str | None) -> None:
                 f"Provenance ID: {detail.get('provenance_id') or NOT_DECLARED}",
             ],
         ),
-    ]
+    ])
     body = "".join(
         f'<p class="detail-head">{html.escape(heading)}</p>'
         + "".join(f'<p class="detail-line">{html.escape(line)}</p>' for line in lines)
@@ -412,7 +437,7 @@ def _reading_panel(
         ratio = detail.get("ratio_R")
         ratio_value: Any = ratio
         if ratio is None and isinstance(seasonal, (int, float)) and not isinstance(seasonal, bool) and seasonal == 0:
-            ratio_value = "not fitted"
+            ratio_value = NOT_FITTED
         _stats_strip(
             [
                 ("Velocity", detail.get("velocity_mm_yr"), detail.get("velocity_unit") or "mm/year"),
@@ -420,7 +445,14 @@ def _reading_panel(
                 ("Ratio R", ratio_value, None),
             ]
         )
-        _inspector_groups(detail, case_id)
+        context = _call(
+            loaders,
+            "get_cell_velocity_context",
+            case_id,
+            str(detail.get("cell_id")),
+            filters,
+        )
+        _inspector_groups(detail, case_id, context if isinstance(context, dict) else None)
         export = _call(loaders, "get_cell_export", str(case_id), str(detail.get("cell_id")))
         if isinstance(export, dict) and export:
             st.download_button(
@@ -596,8 +628,8 @@ _MAP_TOOLTIP_TEXT = (
     "Velocity {velocity_mm_yr} {velocity_unit}\n"
     "Coherence {coherence}\n"
     "Regime {regime_label}\n"
-    "Ratio R {ratio_R}\n"
-    "Risk band {risk_band}\n"
+    "Ratio R {ratio_text}\n"
+    "Risk band {risk_band} (from |velocity|, not a measurement)\n"
     "Land use {land_use_label}"
 )
 _TOOLTIP_FIELDS = frozenset(re.findall(r"\{(\w+)\}", _MAP_TOOLTIP_TEXT))
@@ -620,6 +652,16 @@ def _deck_records(frame: Any, extrude: bool) -> list[dict[str, Any]]:
         record["risk_band"] = risk_label(row.get("risk_level"))
         record["land_use_label"] = humanize(row.get("land_use")) if row.get("land_use") else NOT_DECLARED
         record["regime_label"] = humanize(row.get("regime")) if row.get("regime") else NOT_DECLARED
+        ratio = row.get("ratio_R")
+        amplitude = row.get("seasonal_amp_mm")
+        # A null ratio with a zero amplitude is the contract's "not fitted" state.
+        record["ratio_text"] = (
+            NOT_FITTED
+            if ratio is None
+            or (isinstance(ratio, float) and ratio != ratio)
+            or (isinstance(amplitude, (int, float)) and amplitude == 0)
+            else format_number(ratio)
+        )
         # Flat mode must not keep loader heights: non-zero elevation still
         # produces z-fighting that reads as overlapping hexes.
         record["height"] = record.get("height") if extrude else 0
@@ -656,7 +698,7 @@ def _render_deck(
                     row.get(metric),
                     float(vmin),
                     float(vmax),
-                    MAP_RAMPS[ramp],
+                    map_ramp(ramp, reported_scheme()),
                 )
     layer = pdk.Layer(
         "H3HexagonLayer",
@@ -669,7 +711,12 @@ def _render_deck(
         auto_highlight=True,
         extruded=extrude,
         elevation_scale=1 if extrude else 0,
-        coverage=0.9,
+        coverage=1.0,
+        # A 1 px boundary in the theme's text ink keeps each cell's shape at >= 3:1
+        # against both basemaps, including the pale mid-ramp as seen on light tiles.
+        stroked=True,
+        get_line_color=_hex_rgba(active_palette()["border-strong"], 200),
+        line_width_min_pixels=1,
     )
     layers = [layer]
     for layer_name, color, collection in context_groups:
@@ -796,14 +843,18 @@ def render_map_tab(
     # seeded value so a bad URL cannot pick an unknown mode.
     if st.session_state.get("scale_mode") not in SCALE_LABELS:
         st.session_state.scale_mode = "independent"
-    mode = st.radio(
+    # Streamlit 1.67: a segmented control keeps the same key and default as the old
+    # radio, but reads as one control rather than two independent radio groups.
+    mode = st.segmented_control(
         "Scale",
         list(SCALE_LABELS),
         format_func=lambda key: SCALE_LABELS[key],
-        horizontal=True,
         key="scale_mode",
         label_visibility="collapsed",
+        width="stretch",
     )
+    if mode not in SCALE_LABELS:
+        mode = "independent"
     if st.session_state.get("map_color_ramp") not in MAP_RAMP_LABELS:
         st.session_state.map_color_ramp = "classic"
     ramp = st.session_state.map_color_ramp
@@ -886,6 +937,24 @@ def render_map_tab(
             )
         # The ramp belongs to the canvas: directly under it, before the export.
         st.markdown(_legend_inline(scale, mode, ramp), unsafe_allow_html=True)
+        if is_shared_scale(mode):
+            st.caption(
+                "Shared scale: one colour domain is used for every published case. "
+                "Bars in the comparison card are comparable only in this mode."
+            )
+        if active.get("extrude_3d"):
+            # Column height comes from the map adapter's presentation constants; it is a camera
+            # choice, never a geophysical measurement. The values are unchanged.
+            presentation = _call(loaders, "get_extrusion_presentation")
+            if isinstance(presentation, dict):
+                baseline = presentation.get("baseline_m")
+                amplitude = presentation.get("amplitude_m")
+                unit = str(presentation.get("unit") or "m")
+                if isinstance(baseline, (int, float)) and isinstance(amplitude, (int, float)):
+                    st.caption(
+                        f"3D column height is presentation only: baseline {baseline:g} {unit} "
+                        f"plus amplitude {amplitude:g} {unit}. Cell values and units are unchanged."
+                    )
         export_csv = _call(loaders, "get_filtered_export_csv", case_id, active)
         if isinstance(export_csv, str) and export_csv:
             st.download_button(
@@ -983,13 +1052,25 @@ def render_map_tab(
                 horizontal=False,
             )
         st.markdown('<p class="kicker">Scale and provenance</p>', unsafe_allow_html=True)
-        # The live filtered count is already in the Filters disclosure title.
-        counts_text = (
-            f"{shown} of {total} cells"
-            if isinstance(shown, int) and isinstance(total, int)
-            else ""
-        )
-        st.markdown(_legend_details(scale, counts_text), unsafe_allow_html=True)
+        # The live filtered count is in the one-line mission header; repeating it here
+        # would duplicate the same datum inside one view.
+        st.markdown(_legend_details(scale, ""), unsafe_allow_html=True)
+        coherence_summary = _call(loaders, "get_coherence_summary", case_id, active)
+        if isinstance(coherence_summary, dict) and coherence_summary.get("min") is not None:
+            low = format_number(coherence_summary["min"], 3)
+            high = format_number(coherence_summary.get("max"), 3)
+            floor = coherence_summary.get("declared_min")
+            floor_text = (
+                f" · published floor {format_number(floor, 3)}"
+                if isinstance(floor, (int, float)) and not isinstance(floor, bool)
+                else ""
+            )
+            st.markdown(
+                '<p class="legend-meta">'
+                f"Observed coherence: {html.escape(low)} … {html.escape(high)} (dimensionless)"
+                f"{html.escape(floor_text)}.</p>",
+                unsafe_allow_html=True,
+            )
         # One provenance line per selected case in this tab; the full per-case IDs
         # (all three cities) live in "Provenance and limits".
         if not st.session_state.get("selected_cell_id"):

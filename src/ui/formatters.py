@@ -10,6 +10,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Sequence
 
 NOT_DECLARED = "not declared"
+NOT_FITTED = "not fitted"
 SOURCE_NOT_DECLARED = "source not declared"
 UNIT_NOT_DECLARED = "unit not declared"
 DEMO_BANNER = "DEMONSTRATION DATA"
